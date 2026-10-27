@@ -1,0 +1,21 @@
+# Data
+data/raw/
+*.csv
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Database artifacts
+*.log
+pgsql/
