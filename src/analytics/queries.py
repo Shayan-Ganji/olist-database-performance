@@ -76,7 +76,7 @@ ORDER BY 1;
 
 
 # 4. Product Question 4: Top 20 Sellers by Revenue with Average Prep Time and Review Score
-# Optimized Surgical CTE: filters top 20 sellers first to eliminate full join fan-out
+# Optimized Early CTE: filters top 20 sellers first to eliminate full join fan-out
 Q4_TOP_SELLERS_SURGICAL = """
 WITH top_sellers AS (
     SELECT 
