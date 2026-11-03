@@ -1,5 +1,5 @@
 # Stage 2: Database Performance, Index Optimization & Execution Plan Analysis
-**دانشجو:** شایان گنجی (Shayan Ganji)  
+**دانشجو:** شایان گنجی  
 **آزمایشگاه:** آزمایشگاه فناوری های مالی داتین- ترم سوم  
 **محیط پایگاه‌داده:** PostgreSQL 16.4 | دیتابیس `olist_db` (داده‌های Olist برزیل و NYC 311)  
 
