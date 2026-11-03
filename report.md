@@ -8,7 +8,7 @@
 
 ## 1. Problem Formulation, Data Dimensions, and Boundary Assumptions
 
-In this practical engineering challenge, acting in the capacity of a Database Administrator (DBA), the primary mandate was to design, implement, and benchmark a relational data platform capable of sustaining an enterprise e-commerce analytics workload under PostgreSQL 16. The production dataset comprises **1,847,423 records** partitioned across 10 relational tables: 9 normalized tables originating from the Brazilian e-commerce marketplace (Olist)—encompassing customer orders, order line items, payment gateways, review feedback, catalog products, sellers, and geospatial coordinates—alongside a curated dataset of municipal service requests (NYC 311, containing 297,899 records) injected directly from Stage 1 via an extensible sink adapter.
+In this practical engineering challenge, acting in the capacity of a Database Administrator (DBA), the primary mandate was to design, implement, and benchmark a relational data platform capable of sustaining an enterprise e-commerce analytics workload under PostgreSQL 16. The production dataset comprises **1,847,423 records** partitioned across 10 relational tables (verified in Cell 4 of `solution.ipynb`): 9 normalized tables originating from the Brazilian e-commerce marketplace (Olist)—encompassing customer orders, order line items, payment gateways, review feedback, catalog products, sellers, and geospatial coordinates—alongside a curated dataset of municipal service requests (NYC 311, containing 297,899 records) injected directly from Stage 1 via an extensible sink adapter.
 
 The engineering objective was to satisfy 5 analytical queries requested by the product team for an operational dashboard, within a **200 ms latency budget** per query. Without indexing and schema optimization, queries aggregating large tables experience high latency caused by sequential table scans, memory buffer pressure, and external merge sorts spilling to disk.
 
@@ -34,17 +34,17 @@ Two naive workarounds presented themselves: deduplicating records by discarding 
 ### 2.3. Dashboard Performance Under Heavy Joins: Analytical Snapshot Table vs. Dynamic Live View
 Product Question 1 required computing monthly sales volume, Gross Merchandise Value (GMV), and Average Order Value (AOV) broken down by product category. Executing this calculation dynamically via a live database view (`view_order_item_details`) forced the database engine to perform a 4-way hash join across `orders`, `order_items`, `products`, and `product_category_translation`, processing over 110,000 line items on every dashboard request.
 
-Benchmarking this dynamic view across 5 consecutive runs produced a median execution latency of **511.95 ms**—more than 2.5 times the 200 ms budget ceiling. To resolve this structural constraint, an analytical snapshot architecture was introduced: an idempotent stored procedure (`sp_refresh_monthly_category_snapshot`) precomputes monthly summary slices into a dedicated analytical table (`olist.snapshot_monthly_category_analytics`). Querying this precomputed snapshot reduced execution latency from 511.95 ms down to **2.55 ms**, well within the budget. The accepted architectural trade-off was sacrificing real-time streaming data freshness; newly arrived orders are only reflected after scheduled periodic execution of the snapshot procedure, a standard and widely accepted practice in operational business intelligence.
+Benchmarking this dynamic view across 5 consecutive runs produced a median execution latency of **511.95 ms**—more than 2.5 times the 200 ms budget ceiling. To resolve this structural constraint, an analytical snapshot architecture was introduced: an idempotent stored procedure (`sp_refresh_monthly_category_snapshot`) precomputes monthly summary slices into a dedicated analytical table (`olist.snapshot_monthly_category_analytics`). Querying this precomputed snapshot reduced execution latency from 511.95 ms down to **2.55 ms**, well within the budget (benchmarked in Cell 14 of `solution.ipynb`). The accepted architectural trade-off was sacrificing real-time streaming data freshness; newly arrived orders are only reflected after scheduled periodic execution of the snapshot procedure, a standard and widely accepted practice in operational business intelligence.
 
 ### 2.4. Eliminating External Disk Spills via Early CTE Filtering (Top 20 Sellers)
 Product Question 4 demanded identifying the top 20 sellers by cumulative revenue, paired with their delivery delay rates and average review ratings. Formulating this query naively through a monolithic join across all 3,095 sellers, 110,000 items, and 99,000 reviews resulted in inefficient query execution plans: the optimizer performed global hash joins and aggregated across all sellers before sorting, causing an `External Merge Sort` that spilled 6.5 MB of temporary buffers to disk and took **392.9 ms**.
 
-The query was restructured using an early-filtering CTE pattern: an initial lightweight Common Table Expression filters and ranks only the top 20 sellers by revenue directly from the indexed `order_items` table. Subsequent downstream joins for delivery latency and customer satisfaction were strictly constrained to those 20 pre-filtered seller identifiers. This structural refactoring reduced the row processing volume, eliminated disk spilling entirely, and reduced median execution time down to **152.25 ms**. The deliberate trade-off was increased SQL query verbosity and multi-stage query structure.
+The query was restructured using an early-filtering CTE pattern: an initial lightweight Common Table Expression filters and ranks only the top 20 sellers by revenue directly from the indexed `order_items` table. Subsequent downstream joins for delivery latency and customer satisfaction were strictly constrained to those 20 pre-filtered seller identifiers. This structural refactoring reduced the row processing volume, eliminated disk spilling entirely, and reduced median execution time down to **152.25 ms** (execution plans and benchmark comparisons documented in Cells 6 and 8 of `solution.ipynb`). The deliberate trade-off was increased SQL query verbosity and multi-stage query structure.
 
 ### 2.5. Covering Indexes and Quantifying the Hidden Cost of Indexing (Write Amplification)
 To bring queries 2 through 5 safely under the 200 ms latency budget, strategic covering B-Tree indexes were deployed, including `idx_order_items_seller_order_price` and `idx_orders_status_purchase`. These indexes enabled index-only and bitmap scans, dropping median latency for Query 2 to **153.56 ms** and Query 5 to **53.22 ms**.
 
-However, in enterprise database administration, every index introduces non-trivial operational costs in disk storage and write latency. A dedicated storage profiler revealed that on the `order_items` table, the raw data occupies 18 MB, whereas its supporting indexes consume **38 MB (210.5% of total table data size)**. Furthermore, empirical write-amplification profiling demonstrated that inserting a batch of 10,000 records took 0.028 seconds on an unindexed table compared to 0.118 seconds on the indexed table—a **4.19x write slowdown**. This empirical evidence confirmed the critical engineering necessity of continuous index pruning and disciplined schema governance.
+However, in enterprise database administration, every index introduces non-trivial operational costs in disk storage and write latency. A dedicated storage profiler revealed that on the `order_items` table, the raw data occupies 18 MB, whereas its supporting indexes consume **38 MB (210.5% of total table data size)**. Furthermore, empirical write-amplification profiling demonstrated that inserting a batch of 10,000 records took 0.028 seconds on an unindexed table compared to 0.118 seconds on the indexed table—a **4.19x write slowdown** (profiled empirically in Cell 10 of `solution.ipynb`). This empirical evidence confirmed the critical engineering necessity of continuous index pruning and disciplined schema governance.
 
 ---
 
@@ -70,13 +70,13 @@ WHERE order_purchase_timestamp >= '2017-01-01 00:00:00+00'
   AND order_purchase_timestamp < '2018-01-01 00:00:00+00' 
   AND order_status = 'delivered';
 ```
-This enabled direct `Bitmap Index Scan` utilization, slashing latency to **3.1 ms (a 7.3x performance speedup)**.
+This enabled direct `Bitmap Index Scan` utilization, slashing latency to **3.1 ms (a 7.3x performance speedup)** (benchmarked in Cell 12 of `solution.ipynb`).
 
 ---
 
 ## 4. Performance Benchmark Results Against the 200 ms Latency Budget
 
-All queries were rigorously benchmarked using the median of 5 consecutive runs following buffer warmup:
+All queries were rigorously benchmarked using the median of 5 consecutive runs following buffer warmup (Cell 6 of `solution.ipynb`):
 
 | Query ID | Business Question / Analytical Focus | Target Budget | Actual Median Latency | Compliance Status |
 | :--- | :--- | :---: | :---: | :---: |
